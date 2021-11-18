@@ -22,9 +22,9 @@ toupper() {
 
 grep_cmdline() {
   local REGEX="s/^$1=//p"
-  local CL=$(cat /proc/cmdline 2>/dev/null)
-  POSTFIX=$([ $(expr $(echo "$CL" | tr -d -c '"' | wc -m) % 2) == 0 ] && echo -n '' || echo -n '"')
-  { eval "for i in $CL$POSTFIX; do echo \$i; done" ; cat /proc/bootconfig 2>/dev/null | sed 's/[[:space:]]*=[[:space:]]*\(.*\)/=\1/g' | sed 's/"//g'; } | sed -n "$REGEX" 2>/dev/null
+  { echo $(cat /proc/cmdline)$(sed -e 's/[^"]//g' -e 's/""//g' /proc/cmdline) | xargs -n 1; \
+    sed -e 's/ = /=/g' -e 's/, /,/g' -e 's/"//g' /proc/bootconfig; \
+  } 2>/dev/null | sed -n "$REGEX"
 }
 
 grep_prop() {
@@ -560,13 +560,13 @@ check_data() {
 
 find_magisk_apk() {
   local DBAPK
-  [ -z $APK ] && APK=/data/adb/magisk.apk
-  [ -f $APK ] || APK=/data/magisk/magisk.apk
+  [ -z $APK ] && APK=$NVBASE/magisk.apk
+  [ -f $APK ] || APK=$MAGISKBIN/magisk.apk
   [ -f $APK ] || APK=/data/app/com.topjohnwu.magisk*/*.apk
   [ -f $APK ] || APK=/data/app/*/com.topjohnwu.magisk*/*.apk
   if [ ! -f $APK ]; then
     DBAPK=$(magisk --sqlite "SELECT value FROM strings WHERE key='requester'" 2>/dev/null | cut -d= -f2)
-    [ -z $DBAPK ] && DBAPK=$(strings /data/adb/magisk.db | grep -oE 'requester..*' | cut -c10-)
+    [ -z $DBAPK ] && DBAPK=$(strings $NVBASE/magisk.db | grep -oE 'requester..*' | cut -c10-)
     [ -z $DBAPK ] || APK=/data/user_de/*/$DBAPK/dyn/*.apk
     [ -f $APK ] || [ -z $DBAPK ] || APK=/data/app/$DBAPK*/*.apk
     [ -f $APK ] || [ -z $DBAPK ] || APK=/data/app/*/$DBAPK*/*.apk
@@ -578,7 +578,7 @@ run_migrations() {
   local LOCSHA1
   local TARGET
   # Legacy app installation
-  local BACKUP=/data/adb/magisk/stock_boot*.gz
+  local BACKUP=$MAGISKBIN/stock_boot*.gz
   if [ -f $BACKUP ]; then
     cp $BACKUP /data
     rm -f $BACKUP
@@ -596,7 +596,7 @@ run_migrations() {
   # Stock backups
   LOCSHA1=$SHA1
   for name in boot dtb dtbo dtbs; do
-    BACKUP=/data/adb/magisk/stock_${name}.img
+    BACKUP=$MAGISKBIN/stock_${name}.img
     [ -f $BACKUP ] || continue
     if [ $name = 'boot' ]; then
       LOCSHA1=`$MAGISKBIN/magiskboot sha1 $BACKUP`
@@ -615,10 +615,12 @@ copy_sepolicy_rules() {
 
   # Find current active RULESDIR
   local RULESDIR
-  local active_dir=$(magisk --path)/.magisk/mirror/sepolicy.rules
-  if [ -L $active_dir ]; then
-    RULESDIR=$(readlink $active_dir)
+  local ACTIVEDIR=$(magisk --path)/.magisk/mirror/sepolicy.rules
+  if [ -L $ACTIVEDIR ]; then
+    RULESDIR=$(readlink $ACTIVEDIR)
     [ "${RULESDIR:0:1}" != "/" ] && RULESDIR="$(magisk --path)/.magisk/mirror/$RULESDIR"
+  elif ! $ISENCRYPTED; then
+    RULESDIR=$NVBASE/modules
   elif [ -d /data/unencrypted ] && ! grep ' /data ' /proc/mounts | grep -qE 'dm-|f2fs'; then
     RULESDIR=/data/unencrypted/magisk
   elif grep -q ' /cache ' /proc/mounts; then
@@ -642,7 +644,7 @@ copy_sepolicy_rules() {
   fi
 
   # Copy all enabled sepolicy.rule
-  for r in /data/adb/modules*/*/sepolicy.rule; do
+  for r in $NVBASE/modules*/*/sepolicy.rule; do
     [ -f "$r" ] || continue
     local MODDIR=${r%/*}
     [ -f $MODDIR/disable ] && continue
